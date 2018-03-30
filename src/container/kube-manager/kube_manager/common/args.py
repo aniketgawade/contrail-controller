@@ -89,7 +89,8 @@ def parse_args(args_str=None):
         'nested_mode': '0',
         'global_tags': '1',
         'aps_name': '',
-        'kube_timer_interval': '60'
+        'kube_timer_interval': '60',
+        'secure_project': 'True'
     }
     defaults.update(SandeshConfig.get_default_options(['DEFAULTS']))
 
@@ -130,7 +131,7 @@ def parse_args(args_str=None):
         'kubernetes_cluster_domain' : 'default-domain',
         'cluster_name': None,
         'cluster_project' : "{}",
-        'cluster_network' : None,
+        'cluster_network' : "{}",
         'cluster_pod_network' : None,
         'cluster_service_network' : None,
         'ip_fabric_forwarding': False,

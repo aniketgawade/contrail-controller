@@ -27,7 +27,10 @@ public:
 protected:
     virtual void SetUp() {
         port_table_ = new PortTable(agent_, 1000, IPPROTO_TCP);
-        port_table_->UpdatePortConfig(10, 0, 0);
+        PortConfig pc;
+        pc.port_count = 10;
+        pc.Trim();
+        port_table_->UpdatePortConfig(&pc);
         client->WaitForIdle();
 
         AddVn(agent_->fabric_vn_name().c_str(), 100);
@@ -101,7 +104,11 @@ TEST_F(PortAllocationTest, Test3) {
 }
 
 TEST_F(PortAllocationTest, Range) {
-    port_table_->UpdatePortConfig(10, 50000, 50001);
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50001));
+    pc.Trim();
+
+    port_table_->UpdatePortConfig(&pc);
     client->WaitForIdle();
 
     FlowKey key1(10, sip1_, dip1_, IPPROTO_TCP, 10, 20);
@@ -115,7 +122,11 @@ TEST_F(PortAllocationTest, Range) {
 }
 
 TEST_F(PortAllocationTest, PortExhaust) {
-    port_table_->UpdatePortConfig(1, 50000, 50000);
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50000));
+    pc.Trim();
+
+    port_table_->UpdatePortConfig(&pc);
     client->WaitForIdle();
 
     FlowKey key1(10, sip1_, dip1_, IPPROTO_TCP, 10, 20);
@@ -168,7 +179,8 @@ TEST_F(PortAllocationTest, DISABLED_IcmpFlow) {
 
 TEST_F(PortAllocationTest, ShortUdpFlow) {
     PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
-    pm->UpdatePortConfig(IPPROTO_UDP, 0, 0, 0);
+    PortConfig pc;
+    pm->UpdatePortConfig(IPPROTO_UDP, &pc);
     client->WaitForIdle();
 
     TxUdpPacket(VmPortGetId(1), "1.1.1.10", "8.8.8.8", 100, 100);
@@ -185,7 +197,10 @@ TEST_F(PortAllocationTest, UdpFlow) {
     //Configure port range only for UDP ensure UDP flow is created fine
 
     PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
-    pm->UpdatePortConfig(IPPROTO_UDP, 10, 0, 0);
+    PortConfig pc;
+    pc.port_count = 10;
+    pc.Trim();
+    pm->UpdatePortConfig(IPPROTO_UDP, &pc);
     client->WaitForIdle();
 
 	TxUdpPacket(VmPortGetId(1), "1.1.1.10", "8.8.8.8", 100, 100);
@@ -202,8 +217,11 @@ TEST_F(PortAllocationTest, UdpFlow) {
 TEST_F(PortAllocationTest, ShortTcpFlow) {
     //TCP flow is short flow as no port config
     PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
-    pm->UpdatePortConfig(IPPROTO_UDP, 10, 0, 0);
-    pm->UpdatePortConfig(IPPROTO_TCP, 0, 0, 0);
+    PortConfig pc;
+    pc.port_count = 10;
+    pm->UpdatePortConfig(IPPROTO_UDP, &pc);
+    pc.port_count = 0;
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc);
     client->WaitForIdle();
 
 	TxTcpPacket(VmPortGetId(1), "1.1.1.10", "8.8.8.8", 100, 100, false);
@@ -217,8 +235,10 @@ TEST_F(PortAllocationTest, ShortTcpFlow) {
 }
 
 TEST_F(PortAllocationTest, TcpFlow) {
-	PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
-	pm->UpdatePortConfig(IPPROTO_TCP, 10, 0, 0);
+    PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
+    PortConfig pc;
+    pc.port_count = 10;
+	pm->UpdatePortConfig(IPPROTO_TCP, &pc);
 	client->WaitForIdle();
 
 	TxTcpPacket(VmPortGetId(1), "1.1.1.10", "8.8.8.8", 100, 100, false);
@@ -243,7 +263,11 @@ TEST_F(PortAllocationTest, NonTcpUdpFlow) {
 }
 
 TEST_F(PortAllocationTest, IpScale) {
-    port_table_->UpdatePortConfig(1, 50000, 50000);
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50000));
+    pc.Trim();
+
+    port_table_->UpdatePortConfig(&pc);
     client->WaitForIdle();
 
     int success = 0;
@@ -257,7 +281,12 @@ TEST_F(PortAllocationTest, IpScale) {
 }
 
 TEST_F(PortAllocationTest, PortRangeAllocation) {
-    port_table_->UpdatePortConfig(1, 50000, 50002);
+    PortConfig pc;
+    pc.port_count = 3;
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50002));
+    pc.Trim();
+
+    port_table_->UpdatePortConfig(&pc);
     client->WaitForIdle();
 
     FlowKey key1(10, Ip4Address(1), Ip4Address(2), IPPROTO_TCP, 10, 20);
@@ -273,7 +302,11 @@ TEST_F(PortAllocationTest, PortRangeAllocation) {
 
 
 TEST_F(PortAllocationTest, PortScale) {
-    port_table_->UpdatePortConfig(1, 50000, 50000);
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50000));
+    pc.Trim();
+
+    port_table_->UpdatePortConfig(&pc);
     client->WaitForIdle();
 
     int success = 0;
@@ -289,7 +322,12 @@ TEST_F(PortAllocationTest, PortScale) {
 TEST_F(PortAllocationTest, RangeUpdate) {
     //TCP flow is short flow as no port config
     PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
-    pm->UpdatePortConfig(IPPROTO_TCP, 10, 50000, 50010);
+
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50010));
+    pc.Trim();
+
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc);
     client->WaitForIdle();
 
     const PortTable *pt = pm->GetPortTable(IPPROTO_TCP);
@@ -300,7 +338,11 @@ TEST_F(PortAllocationTest, RangeUpdate) {
         client->WaitForIdle();
     }
 
-    pm->UpdatePortConfig(IPPROTO_TCP, 10, 50005, 50010);
+    PortConfig pc1;
+    pc1.port_range.push_back(PortConfig::PortRange(50005, 50010));
+    pc1.Trim();
+
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc1);
     client->WaitForIdle();
 
     //All ports get relocated hence all flow should be deleted
@@ -324,10 +366,14 @@ TEST_F(PortAllocationTest, RangeUpdate) {
 TEST_F(PortAllocationTest, RangeUpdate1) {
     //TCP flow is short flow as no port config
     PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
-    pm->UpdatePortConfig(IPPROTO_TCP, 0, 0, 0);
+    PortConfig pc;
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc);
     client->WaitForIdle();
 
-    pm->UpdatePortConfig(IPPROTO_TCP, 10, 50000, 50010);
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50010));
+    pc.Trim();
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc);
+
     const PortTable *pt = pm->GetPortTable(IPPROTO_TCP);
     client->WaitForIdle();
 
@@ -338,7 +384,12 @@ TEST_F(PortAllocationTest, RangeUpdate1) {
 
     //New ports gets added at end, hence no flow should be
     //deleted
-    pm->UpdatePortConfig(IPPROTO_TCP, 10, 49980, 50010);
+    pc.port_count = 30;
+    pc.port_range.clear();
+    pc.port_range.push_back(PortConfig::PortRange(49980, 50010));
+    pc.Trim();
+
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc);
     client->WaitForIdle();
 
     for (uint32_t i = 0; i < 10; i++) {
@@ -355,13 +406,16 @@ TEST_F(PortAllocationTest, RangeUpdate1) {
 
 TEST_F(PortAllocationTest, PolicyFlow) {
     PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
-    pm->UpdatePortConfig(IPPROTO_TCP, 0, 22, 22);
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(22, 22));
+    pc.Trim();
+
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc);
     client->WaitForIdle();
 
     TxTcpPacket(VmPortGetId(1), "1.1.1.10", "8.8.8.8", 100, 22, false);
     client->WaitForIdle();
 
-    //No port config hence short flow
     FlowEntry *flow = FlowGet(GetVrfId("vrf1"), "1.1.1.10", "8.8.8.8",
             6, 100, 22, GetFlowKeyNH(1));
     EXPECT_TRUE(flow != NULL);
@@ -381,6 +435,164 @@ TEST_F(PortAllocationTest, IntraVn) {
     EXPECT_TRUE(flow != NULL);
     EXPECT_TRUE(flow->IsShortFlow() == false);
     EXPECT_TRUE(flow->IsNatFlow() == false);
+}
+
+TEST_F(PortAllocationTest, SecondaryIp) {
+    Ip4Address ip = Ip4Address::from_string("1.1.1.3");
+    std::vector<Ip4Address> v;
+    v.push_back(ip);
+    AddAap("vnet1", 1, v);
+
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(50000, 50001));
+    pc.Trim();
+
+    PortTableManager *pm = agent_->pkt()->get_flow_proto()->port_table_manager();
+    pm->UpdatePortConfig(IPPROTO_TCP, &pc);
+    client->WaitForIdle();
+
+    TxTcpPacket(VmPortGetId(1), "1.1.1.3", "8.8.8.8", 100, 22, false);
+    client->WaitForIdle();
+
+    FlowEntry *flow = FlowGet(GetVrfId("vrf1"), "1.1.1.3", "8.8.8.8",
+            6, 100, 22, GetFlowKeyNH(1));
+    EXPECT_TRUE(flow != NULL);
+    EXPECT_TRUE(flow->IsShortFlow() == false);
+    EXPECT_TRUE(flow->IsNatFlow() == true);
+    EXPECT_FALSE(flow->is_flags_set(FlowEntry::FabricControlFlow));
+    EXPECT_FALSE(flow->reverse_flow_entry()->
+            is_flags_set(FlowEntry::FabricControlFlow));
+    EXPECT_TRUE(flow->data().rpf_nh == VmPortGet(1)->flow_key_nh());
+}
+
+//Take a floating-ip from a network enabled for distributed SNAT
+//ensure access from VM to external world goes thru
+TEST_F(PortAllocationTest, FloatingIpWithSNATEnabled) {
+    //Disable SNAT on VRF1
+    AddVrfWithSNat("vrf1", 1, true, false);
+    client->WaitForIdle();
+
+    //Add a floating-ip in vn2 and enable VN2 for
+    //fabric SNAT
+    AddVn("default-project:vn2", 2);
+    AddVrf("default-project:vn2:vn2", 2);
+    AddLink("virtual-network", "default-project:vn2", "routing-instance",
+            "default-project:vn2:vn2");
+    client->WaitForIdle();
+
+    AddFloatingIpPool("fip-pool1", 1);
+    AddFloatingIp("fip1", 1, "1.1.1.100");
+    AddLink("floating-ip", "fip1", "floating-ip-pool", "fip-pool1");
+    AddLink("floating-ip-pool", "fip-pool1", "virtual-network",
+            "default-project:vn2");
+    AddLink("virtual-machine-interface", "vnet1", "floating-ip", "fip1");
+    client->WaitForIdle();
+
+    AddVrfWithSNat("default-project:vn2:vn2", 2,  true, true);
+    client->WaitForIdle();
+
+    TxTcpPacket(VmPortGetId(1), "1.1.1.10", "8.8.8.8", 100, 22, false);
+    client->WaitForIdle();
+
+    FlowEntry *flow = FlowGet(GetVrfId("vrf1"), "1.1.1.10", "8.8.8.8",
+            6, 100, 22, GetFlowKeyNH(1));
+    EXPECT_TRUE(flow != NULL);
+    EXPECT_TRUE(flow->IsShortFlow() == false);
+    EXPECT_TRUE(flow->IsNatFlow() == true);
+    EXPECT_TRUE(flow->reverse_flow_entry()->key().dst_addr.to_v4() ==
+                agent_->router_id());
+    EXPECT_TRUE(flow->data().rpf_nh == VmPortGet(1)->flow_key_nh());
+
+    DelLink("floating-ip", "fip1", "floating-ip-pool", "fip-pool1");
+    DelLink("floating-ip-pool", "fip-pool1", "virtual-network",
+            "default-project:vn2");
+    DelLink("virtual-machine-interface", "intf1", "floating-ip", "fip1");
+    DelLink("virtual-network", "default-project:vn2", "routing-instance",
+            "default-project:vn2:vn2");
+    DelVn("default-project:vn2");
+    DelVrf("default-project:vn2:vn2");
+    client->WaitForIdle();
+}
+
+TEST_F(PortAllocationTest, MultiPortRange) {
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(1, 2));
+    pc.port_range.push_back(PortConfig::PortRange(2, 4));
+    pc.Trim();
+
+    EXPECT_TRUE(pc.port_count == 4);
+
+    port_table_->UpdatePortConfig(&pc);
+    client->WaitForIdle();
+
+    FlowKey key1(10, Ip4Address(1), Ip4Address(2), IPPROTO_TCP, 10, 20);
+    FlowKey key2(10, Ip4Address(1), Ip4Address(2), IPPROTO_TCP, 11, 20);
+    FlowKey key3(10, Ip4Address(1), Ip4Address(2), IPPROTO_TCP, 12, 20);
+    FlowKey key4(10, Ip4Address(1), Ip4Address(2), IPPROTO_TCP, 13, 20);
+
+    EXPECT_TRUE(port_table_->Allocate(key1) == 1);
+    EXPECT_TRUE(port_table_->Allocate(key2) == 2);
+    EXPECT_TRUE(port_table_->Allocate(key3) == 3);
+    EXPECT_TRUE(port_table_->Allocate(key4) == 4);
+}
+
+TEST_F(PortAllocationTest, InvalidPortRange) {
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(2, 1));
+    pc.port_range.push_back(PortConfig::PortRange(4, 2));
+    pc.Trim();
+
+    EXPECT_TRUE(pc.port_count == 0);
+    pc.port_range.clear();
+
+    pc.port_range.push_back(PortConfig::PortRange(2, 4));
+    pc.port_range.push_back(PortConfig::PortRange(2, 1));
+    pc.Trim();
+    EXPECT_TRUE(pc.port_count == 3);
+
+    pc.port_range.clear();
+    pc.port_range.push_back(PortConfig::PortRange(2, 1));
+    pc.port_range.push_back(PortConfig::PortRange(2, 4));
+    pc.Trim();
+    EXPECT_TRUE(pc.port_count == 3);
+}
+
+TEST_F(PortAllocationTest, Subset) {
+    PortConfig pc;
+    pc.port_range.push_back(PortConfig::PortRange(1, 2));
+    pc.port_range.push_back(PortConfig::PortRange(3, 4));
+    pc.port_range.push_back(PortConfig::PortRange(5, 6));
+    pc.port_range.push_back(PortConfig::PortRange(1, 6));
+    pc.Trim();
+    EXPECT_TRUE(pc.port_count == 6);
+
+    pc.port_range.clear();
+    pc.port_range.push_back(PortConfig::PortRange(1, 6));
+    pc.port_range.push_back(PortConfig::PortRange(1, 4));
+    pc.port_range.push_back(PortConfig::PortRange(5, 6));
+    pc.port_range.push_back(PortConfig::PortRange(1, 6));
+    EXPECT_TRUE(pc.port_count == 6);
+
+    pc.port_range.clear();
+    pc.port_range.push_back(PortConfig::PortRange(1, 7));
+    pc.port_range.push_back(PortConfig::PortRange(1, 8));
+    pc.port_range.push_back(PortConfig::PortRange(1, 9));
+    pc.port_range.push_back(PortConfig::PortRange(1, 10));
+    pc.Trim();
+    EXPECT_TRUE(pc.port_count == 10);
+
+    pc.port_range.clear();
+    pc.port_range.push_back(PortConfig::PortRange(100, 150));
+    pc.port_range.push_back(PortConfig::PortRange(80, 130));
+    pc.port_range.push_back(PortConfig::PortRange(90, 140));
+    pc.Trim();
+    EXPECT_TRUE(pc.port_count == 71);
+
+    pc.port_range.clear();
+    pc.port_range.push_back(PortConfig::PortRange(100, 150));
+    pc.port_range.push_back(PortConfig::PortRange(200, 250));
+    pc.Trim();
+    EXPECT_TRUE(pc.port_count == 102);
 }
 
 int main(int argc, char *argv[]) {

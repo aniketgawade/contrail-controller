@@ -26,6 +26,7 @@ from operator import itemgetter
 import itertools
 import sys
 from collections import Mapping, OrderedDict
+from thrift.transport import TSocket
 
 
 def merge_dict(orig_dict, new_dict):
@@ -117,7 +118,8 @@ class VncCassandraClient(object):
     def __init__(self, server_list, db_prefix, rw_keyspaces, ro_keyspaces,
             logger, generate_url=None, reset_config=False, credential=None,
             walk=True, obj_cache_entries=0, obj_cache_exclude_types=None,
-            log_response_time=None, pool_size=0):
+            log_response_time=None, ssl_enabled=False, ca_certs=None,
+            pool_size=0):
         self._reset_config = reset_config
         if db_prefix:
             self._db_prefix = '%s_' % (db_prefix)
@@ -135,6 +137,8 @@ class VncCassandraClient(object):
         self._logger = logger
         self._credential = credential
         self.log_response_time = log_response_time
+        self._ssl_enabled = ssl_enabled
+        self._ca_certs = ca_certs
 
         # if no generate_url is specified, use a dummy function that always
         # returns an empty string
@@ -539,7 +543,7 @@ class VncCassandraClient(object):
         ColumnFamily.insert = self._handle_exceptions(ColumnFamily.insert, "INSERT")
         ColumnFamily.remove = self._handle_exceptions(ColumnFamily.remove, "REMOVE")
         Mutator.send = self._handle_exceptions(Mutator.send, "SEND")
- 
+
         self.sys_mgr = self._cassandra_system_manager()
         self.existing_keyspaces = self.sys_mgr.list_keyspaces()
         for ks, cf_dict in self._rw_keyspaces.items():
@@ -557,11 +561,13 @@ class VncCassandraClient(object):
         # Retry till cassandra is up
         server_idx = 0
         connected = False
+        socket_factory = self._make_socket_factory()
         while not connected:
             try:
                 cass_server = self._server_list[server_idx]
                 sys_mgr = SystemManager(cass_server,
-                                        credentials=self._credential)
+                                        credentials=self._credential,
+                                        socket_factory=socket_factory)
                 connected = True
             except Exception:
                 # TODO do only for
@@ -615,14 +621,28 @@ class VncCassandraClient(object):
                     **create_cf_kwargs)
     # end _cassandra_ensure_keyspace
 
+    def _make_default_socket_factory(self):
+        def default_socket_factory(host, port):
+            return TSocket.TSocket(host, port)
+        return default_socket_factory
+
+    def _make_socket_factory(self):
+        socket_factory = self._make_default_socket_factory()
+        if self._ssl_enabled:
+            socket_factory = pycassa.connection.make_ssl_socket_factory(
+                self._ca_certs, validate=False)
+        return socket_factory
+
     def _cassandra_init_conn_pools(self):
+        socket_factory = self._make_socket_factory()
         for ks, cf_dict in itertools.chain(self._rw_keyspaces.items(),
                                            self._ro_keyspaces.items()):
             keyspace = '%s%s' % (self._db_prefix, ks)
             pool = pycassa.ConnectionPool(
                 keyspace, self._server_list, max_overflow=5, use_threadlocal=True,
                 prefill=True, pool_size=self._pool_size, pool_timeout=120,
-                max_retries=15, timeout=5, credentials=self._credential)
+                max_retries=15, timeout=5, credentials=self._credential,
+                socket_factory=socket_factory)
 
             rd_consistency = pycassa.cassandra.ttypes.ConsistencyLevel.QUORUM
             wr_consistency = pycassa.cassandra.ttypes.ConsistencyLevel.QUORUM
@@ -677,7 +697,9 @@ class VncCassandraClient(object):
             # non config-root child
             parent_type = obj_dict['parent_type']
             if parent_type not in obj_class.parent_types:
-                return False, (400, 'Invalid parent type: %s' % parent_type)
+                msg = ("Invalid parent type: %s not in %s" %
+                       (parent_type, obj_class.parent_types))
+                return False, (400, msg)
             parent_object_type = self._get_resource_class(
                 parent_type).object_type
             parent_fq_name = obj_dict['fq_name'][:-1]
@@ -1317,6 +1339,9 @@ class VncCassandraClient(object):
         fq_name_str = ':'.join(fq_name)
         fq_name_col = utils.encode_string(fq_name_str) + ':' + obj_uuid
         self._obj_fq_name_cf.remove(obj_type, columns = [fq_name_col])
+
+        # Purge map naming cache
+        self.cache_uuid_to_fq_name_del(obj_uuid)
 
         return (True, symmetric_ref_updates)
     # end object_delete

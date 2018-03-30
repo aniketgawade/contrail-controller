@@ -83,7 +83,8 @@ class VncServerCassandraClient(VncCassandraClient):
 
     def __init__(self, db_client_mgr, cass_srv_list, reset_config, db_prefix,
                       cassandra_credential, walk, obj_cache_entries,
-                      obj_cache_exclude_types, log_response_time=None, pool_size=20):
+                      obj_cache_exclude_types, log_response_time=None,
+                      ssl_enabled=False, ca_certs=None, pool_size=20):
         self._db_client_mgr = db_client_mgr
         keyspaces = self._UUID_KEYSPACE.copy()
         keyspaces[self._USERAGENT_KEYSPACE_NAME] = {
@@ -94,7 +95,8 @@ class VncServerCassandraClient(VncCassandraClient):
             credential=cassandra_credential, walk=walk,
             obj_cache_entries=obj_cache_entries,
             obj_cache_exclude_types=obj_cache_exclude_types,
-            log_response_time=log_response_time)
+            log_response_time=log_response_time, ssl_enabled=ssl_enabled,
+            ca_certs=ca_certs)
     # end __init__
 
     def config_log(self, msg, level):
@@ -405,8 +407,8 @@ class VncZkClient(object):
         while True:
             try:
                 self._zk_client = ZookeeperClient(client_name, zk_server_ip,
-                                                  self._sandesh,
-                                                  log_response_time=log_response_time)
+                                           self._sandesh,
+                                           log_response_time=log_response_time)
                 # set the lost callback to always reconnect
                 self._zk_client.set_lost_cb(self.reconnect_zk)
                 break
@@ -463,7 +465,8 @@ class VncZkClient(object):
     # end master_election
 
     def quota_counter(self, path, max_count=sys.maxint, default=0):
-        return self._zk_client.quota_counter(path, max_count, default)
+        return self._zk_client.quota_counter(self._zk_path_pfx + path,
+                                             max_count, default)
 
     def quota_counter_exists(self, path):
         return self._zk_client.exists(path)
@@ -513,9 +516,14 @@ class VncZkClient(object):
         if subnet in self._subnet_allocators:
             self._subnet_allocators.pop(subnet, None)
         if not notify:
-            IndexAllocator.delete_all(self._zk_client,
-                        self._subnet_path+'/'+subnet+'/')
-    # end delete_subnet_allocator
+            # ZK store subnet lock under 2 step depth folder
+            # <vn fq_name string>:<subnet prefix>/<subnet prefix len>
+            # As we prevent subnet overlaping on a same network, the first
+            # folder can contains only one prefix len folder. So we can safely
+            # remove first folder recursively.
+            prefix, _, _ = subnet.rpartition('/')
+            prefix_path = "%s/%s/" % (self._subnet_path, prefix)
+            IndexAllocator.delete_all(self._zk_client, prefix_path)
 
     def _get_subnet_allocator(self, subnet):
         return self._subnet_allocators.get(subnet)
@@ -740,7 +748,8 @@ class VncDbClient(object):
                  reset_config=False, zk_server_ip=None, db_prefix='',
                  db_credential=None, obj_cache_entries=0,
                  obj_cache_exclude_types=None, db_engine='cassandra',
-                 connection=None, **kwargs):
+                 connection=None, cassandra_use_ssl=False,
+                 cassandra_ca_certs=None, **kwargs):
         self._db_engine = db_engine
         self._api_svr_mgr = api_svr_mgr
         self._sandesh = api_svr_mgr._sandesh
@@ -790,7 +799,8 @@ class VncDbClient(object):
                 self._object_db = VncServerCassandraClient(
                     self, db_srv_list, reset_config, db_prefix,
                     db_credential, walk, obj_cache_entries,
-                    obj_cache_exclude_types, self.log_cassandra_response_time)
+                    obj_cache_exclude_types, self.log_cassandra_response_time,
+                    ssl_enabled=cassandra_use_ssl, ca_certs=cassandra_ca_certs)
 
             self._zk_db.master_election("/api-server-election", db_client_init)
         elif db_engine == 'rdbms':
@@ -801,10 +811,14 @@ class VncDbClient(object):
                 db_prefix=db_prefix, credential=db_credential)
             self._zk_db = self._object_db
 
+        health_check_interval = api_svr_mgr.get_rabbit_health_check_interval()
+        if api_svr_mgr.get_worker_id() > 0:
+            health_check_interval = 0.0
+
         self._msgbus = VncServerKombuClient(self, rabbit_servers,
             rabbit_port, rabbit_user, rabbit_password,
             rabbit_vhost, rabbit_ha_mode,
-            api_svr_mgr.get_rabbit_health_check_interval(),
+            health_check_interval,
             **kwargs)
     # end __init__
 
@@ -1752,14 +1766,6 @@ class VncDbClient(object):
     def get_worker_id(self):
         return self._api_svr_mgr.get_worker_id()
     # end get_worker_id
-
-    def get_autonomous_system(self):
-        config_uuid = self.fq_name_to_uuid('global_system_config',
-                                           ['default-global-system-config'])
-        ok, config = self._object_db.object_read('global_system_config',
-                                                 [config_uuid])
-        global_asn = config[0]['autonomous_system']
-        return global_asn
 
     # Insert new perms. Called on startup when walking DB
     def update_perms2(self, obj_uuid):

@@ -29,6 +29,7 @@ class EcmpLoadBalance;
 class ControllerTimer;
 class EndOfRibTxTimer;
 class EndOfRibRxTimer;
+class LlgrStaleTimer;
 class ControllerEcmpRoute;
 
 class AgentXmppChannel {
@@ -76,7 +77,8 @@ public:
                                        const CommunityList *communities,
                                        Agent::RouteTableType type,
                                        const PathPreference &path_preference,
-                                       const EcmpLoadBalance &ecmp_load_balance);
+                                       const EcmpLoadBalance &ecmp_load_balance,
+                                       uint32_t native_vrf_id);
     static bool ControllerSendEvpnRouteAdd(AgentXmppChannel *peer,
                                            AgentRoute *route,
                                            const Ip4Address *nexthop_ip,
@@ -181,6 +183,7 @@ public:
     uint64_t route_published_time() const {return route_published_time_;}
     EndOfRibTxTimer *end_of_rib_tx_timer();
     EndOfRibRxTimer *end_of_rib_rx_timer();
+    LlgrStaleTimer *llgr_stale_timer();
     //Sequence number for this channel
     uint64_t sequence_number() const;
     void Unregister();
@@ -230,7 +233,8 @@ private:
                                             const PathPreference &path_preference,
                                             bool associate,
                                             Agent::RouteTableType type,
-                                            const EcmpLoadBalance &ecmp_load_balance);
+                                            const EcmpLoadBalance &ecmp_load_balance,
+                                            uint32_t native_vrf_id);
     bool BuildTorMulticastMessage(autogen::EnetItemType &item,
                                   std::stringstream &node_id,
                                   AgentRoute *route,
@@ -273,6 +277,7 @@ private:
     uint64_t route_published_time_;
     boost::scoped_ptr<EndOfRibTxTimer> end_of_rib_tx_timer_;
     boost::scoped_ptr<EndOfRibRxTimer> end_of_rib_rx_timer_;
+    boost::scoped_ptr<LlgrStaleTimer> llgr_stale_timer_;
     Agent *agent_;
 };
 

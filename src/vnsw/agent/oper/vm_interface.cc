@@ -133,6 +133,7 @@ VmInterface::VmInterface(const boost::uuids::uuid &uuid,
     ipv4_active_ = false;
     ipv6_active_ = false;
     l2_active_ = false;
+    intf_route_type_ = kInterface;
 }
 
 VmInterface::~VmInterface() {
@@ -157,7 +158,7 @@ bool VmInterface::IsConfigurerSet(VmInterface::Configurer type) {
 bool VmInterface::CmpInterface(const DBEntry &rhs) const {
     const VmInterface &intf=static_cast<const VmInterface &>(rhs);
     if (uuid_ == nil_uuid() && intf.uuid_ == nil_uuid()) {
-        return name_ < intf.name_;
+        return name() < intf.name();
     }
 
     return uuid_ < intf.uuid_;
@@ -168,8 +169,7 @@ string VmInterface::ToString() const {
 }
 
 DBEntryBase::KeyPtr VmInterface::GetDBRequestKey() const {
-    InterfaceKey *key = new VmInterfaceKey(AgentKey::ADD_DEL_CHANGE, uuid_,
-                                           name_);
+    InterfaceKey *key = new VmInterfaceKey(AgentKey::ADD_DEL_CHANGE, uuid_, name());
     return DBEntryBase::KeyPtr(key);
 }
 
@@ -185,7 +185,7 @@ bool VmInterface::Delete(const DBRequest *req) {
     if (configurer_) {
         return false;
     }
-    table->DeleteDhcpSnoopEntry(name_);
+    table->DeleteDhcpSnoopEntry(name());
     return true;
 }
 
@@ -2013,13 +2013,15 @@ bool VmInterface::StaticRoute::AddL3(const Agent *agent,
         }
 
         bool native_encap = false;
+        const Peer *peer = vmi->peer_.get();
         if (vrf_->GetName() == agent->fabric_vrf_name()) {
             vn_list.insert(agent->fabric_vn_name());
             native_encap = true;
+            peer = agent->local_peer();
         }
 
         InetUnicastAgentRouteTable::AddGatewayRoute
-            (vmi->peer_.get(), vrf_->GetName(), addr_.to_v4(), plen_,
+            (peer, vrf_->GetName(), addr_.to_v4(), plen_,
              gw_.to_v4(), vn_list, vmi->vrf_->table_label(),
              sg_id_list, tag_id_list, communities_, native_encap);
     } else {
@@ -2046,7 +2048,12 @@ bool VmInterface::StaticRoute::DeleteL3(const Agent *agent,
     if (vrf_ == NULL)
         return false;
 
-    vmi->DeleteRoute(vrf_->GetName(), addr_, plen_);
+    const Peer *peer = vmi->peer();
+    if (vmi->vmi_type() == VHOST) {
+        peer = agent->local_peer();
+    }
+    InetUnicastAgentRouteTable::Delete(peer, vrf_->GetName(),
+                                       addr_, plen_);
     return true;
 }
 
@@ -2829,7 +2836,7 @@ bool VmInterface::VmiReceiveRoute::AddL3(const Agent *agent,
         table = vrf_->GetInet6UnicastRouteTable();
     }
 
-    table->AddVHostRecvRoute(vmi->peer(), vrf_->GetName(), vmi_key,
+    table->AddVHostRecvRoute(agent->local_peer(), vrf_->GetName(), vmi_key,
                              addr_, plen_, agent->fabric_vn_name(),
                              vmi->policy_enabled(), true);
     return true;
@@ -2840,7 +2847,8 @@ bool VmInterface::VmiReceiveRoute::DeleteL3(const Agent *agent,
     if (vrf_ == NULL)
         return false;
 
-    vmi->DeleteRoute(vrf_->GetName(), addr_, plen_);
+    InetUnicastAgentRouteTable::Delete(agent->local_peer(), vrf_->GetName(),
+                                       addr_, plen_);
     return true;
 }
 
@@ -2852,7 +2860,7 @@ bool VmInterface::VmiReceiveRoute::AddL2(const Agent *agent,
 
     BridgeAgentRouteTable *table =
         static_cast<BridgeAgentRouteTable *>(vrf_->GetRouteTable(Agent::BRIDGE));
-    table->AddBridgeReceiveRoute(vmi->peer(), vrf_->GetName(), 0,
+    table->AddBridgeReceiveRoute(agent->local_peer(), vrf_->GetName(), 0,
                                  vmi->GetVifMac(agent), agent->fabric_vn_name());
     return true;
 }
@@ -2862,7 +2870,7 @@ bool VmInterface::VmiReceiveRoute::DeleteL2(const Agent *agent,
     if (vrf_ == NULL)
         return false;
 
-    BridgeAgentRouteTable::Delete(vmi->peer(), vrf_->GetName(),
+    BridgeAgentRouteTable::Delete(agent->local_peer(), vrf_->GetName(),
                                   vmi->GetVifMac(agent), 0);
     return true;
 }

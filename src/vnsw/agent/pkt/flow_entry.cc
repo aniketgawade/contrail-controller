@@ -299,7 +299,8 @@ void FlowData::Reset() {
     rpf_vrf = VrfEntry::kInvalidIndex;
     disable_validation = false;
     vm_cfg_name = "";
-    bgp_as_a_service_port = 0;
+    bgp_as_a_service_sport = 0;
+    bgp_as_a_service_dport = 0;
     acl_assigned_vrf_index_ = VrfEntry::kInvalidIndex;
     qos_config_idx = AgentQosConfigTable::kInvalidIndex;
     ttl = 0;
@@ -591,10 +592,12 @@ bool FlowEntry::InitFlowCmn(const PktFlowInfo *info, const PktControlInfo *ctrl,
     }
     if (info->bgp_router_service_flow) {
         set_flags(FlowEntry::BgpRouterService);
-        data_.bgp_as_a_service_port = info->nat_sport;
+        data_.bgp_as_a_service_sport = info->nat_sport;
+        data_.bgp_as_a_service_dport = info->nat_dport;
     } else {
         reset_flags(FlowEntry::BgpRouterService);
-        data_.bgp_as_a_service_port = 0;
+        data_.bgp_as_a_service_sport = 0;
+        data_.bgp_as_a_service_dport = 0;
     }
 
     if (info->alias_ip_flow) {
@@ -854,9 +857,11 @@ bool FlowEntry::IsFabricControlFlow() const {
             uint16_t metadata_port = 0;
             Ip4Address local_ip(0);
             uint16_t local_port = 0;
+            std::string metadata_hostname;
             agent->oper_db()->global_vrouter()->
                 FindLinkLocalService(GlobalVrouter::kMetadataService,
                                      &local_ip, &local_port,
+                                     &metadata_hostname,
                                      &metadata_ip,
                                      &metadata_port);
             if (key_.dst_addr.to_v4() == metadata_ip &&
@@ -3473,7 +3478,7 @@ uint16_t PortTable::HashFlowKey(const FlowKey &key) {
 
 PortTable::PortTable(Agent *agent, uint32_t hash_table_size, uint8_t protocol):
     agent_(agent), protocol_(protocol), cache_(this),
-    hash_table_size_(hash_table_size), port_count_(0) {
+    hash_table_size_(hash_table_size) {
     for (uint32_t i = 0; i < hash_table_size; i++) {
          hash_table_.push_back(PortBitMapPtr(new PortBitMap()));
     }
@@ -3505,7 +3510,7 @@ uint16_t PortTable::Allocate(const FlowKey &key) {
 
     //Mark the port as used in bit map of hash
     uint16_t index = bit_map->Insert(key);
-    if (index >= port_count_) {
+    if (index >= port_to_bit_index_.size()) {
         bit_map->Remove(index);
         return port;
     }
@@ -3574,7 +3579,7 @@ void PortTable::AddPort(uint16_t port_no) {
     PortToBitIndexMap::iterator it = port_to_bit_index_.find(port_no);
     //Port number already present
     if (port_no != kInvalidPort && it != port_to_bit_index_.end()) {
-        if (it->second >= port_count_) {
+        if (it->second >= port_config_.port_count) {
             Relocate(port_no);
         }
         return;
@@ -3616,44 +3621,40 @@ void PortTable::DeletePort(uint16_t port_no) {
 }
 
 bool PortTable::IsValidPort(uint16_t port, uint16_t count) {
-    if (range_start_ != PortTable::kInvalidPort) {
-        if (port >= range_start_ && port <= range_end_) {
-            return true;
-        } else {
-            return false;
+    if (port_config_.port_range.size() != 0) {
+        std::vector<PortConfig::PortRange>::const_iterator it =
+            port_config_.port_range.begin();
+        //Go thru each range
+        for(; it != port_config_.port_range.end(); it++) {
+            if (port >= it->port_start && port <= it->port_end) {
+                return true;
+            }
         }
+    } else {
+        return (count < port_config_.port_count);
     }
 
-    return (count < port_count_);
+    return false;
 }
 
-void PortTable::UpdatePortConfig(uint16_t port_count, uint16_t range_start,
-                                 uint16_t range_end) {
+void PortTable::UpdatePortConfig(const PortConfig *pc) {
     if (task_trigger_.get()) {
         task_trigger_->Reset();
     }
 
+    PortConfig new_pc = *pc;
+
     int task_id = TaskScheduler::GetInstance()->GetTaskId(kTaskFlowEvent);
     task_trigger_.reset
         (new TaskTrigger(boost::bind(&PortTable::HandlePortConfig, this,
-                         port_count, range_start, range_end), task_id, 0));
+                         new_pc), task_id, 0));
     task_trigger_->Set();
 }
 
-bool PortTable::HandlePortConfig(uint16_t port_count, uint16_t range_start,
-                                 uint16_t range_end) {
-    uint16_t old_port_count = port_count_;
+bool PortTable::HandlePortConfig(const PortConfig &pc) {
     tbb::recursive_mutex::scoped_lock lock(mutex_);
-    if (range_start != PortTable::kInvalidPort &&
-        range_end != PortTable::kInvalidPort) {
-        range_start_ = range_start;
-        range_end_ = range_end;
-        port_count_ = (range_end_ - range_start_) + 1;
-    } else {
-        range_start_ = PortTable::kInvalidPort;
-        range_end_ = PortTable::kInvalidPort;
-        port_count_ = port_count;
-    }
+    uint16_t old_port_count = port_to_bit_index_.size();
+    port_config_ = pc;
 
     uint16_t count = 0;
     PortToBitIndexMap::iterator it = port_to_bit_index_.begin();
@@ -3670,16 +3671,22 @@ bool PortTable::HandlePortConfig(uint16_t port_count, uint16_t range_start,
         }
     }
 
-    if (range_start) {
-        //Handle range of port
-        for (uint16_t port = range_start_; range_end_ && port <= range_end_;
-             port++) {
-            AddPort(port);
+    if (port_config_.port_range.size()) {
+        std::vector<PortConfig::PortRange>::const_iterator it =
+            port_config_.port_range.begin();
+        //Go thru each range
+        for(; it != port_config_.port_range.end(); it++) {
+            //Handle range of port
+            for (uint16_t port = it->port_start;
+                 it->port_end && port <= it->port_end;
+                 port++) {
+                AddPort(port);
+            }
         }
     } else {
         //Handle port count, port_count_ would be set only if range is
         //not valid
-        for (uint16_t port = count; port < port_count_; port++) {
+        for (uint16_t port = count; port < port_config_.port_count; port++) {
             AddPort(0);
         }
     }
@@ -3690,6 +3697,22 @@ uint16_t PortTable::GetPortIndex(uint16_t port) const {
     PortToBitIndexMap::const_iterator it = port_to_bit_index_.find(port);
     assert(it != port_to_bit_index_.end());
     return it->second;
+}
+
+void PortTable::GetFlowKeyList(uint16_t port,
+                               std::vector<FlowKey> &list) const {
+    tbb::recursive_mutex::scoped_lock lock(mutex_);
+    if (port_to_bit_index_.find(port) == port_to_bit_index_.end()) {
+        return;
+    }
+
+    for (uint16_t hash = 0; hash < hash_table_size_; hash++) {
+        const PortBitMapPtr bit_map = hash_table_[hash];
+        FlowKey existing_key = bit_map->At(GetPortIndex(port));
+        if (existing_key.family != Address::UNSPEC) {
+            list.push_back(existing_key);
+        }
+    }
 }
 
 PortTableManager::PortTableManager(Agent *agent, uint16_t hash_table_size):
@@ -3722,22 +3745,16 @@ void PortTableManager::Free(const FlowKey &key, uint16_t port, bool evict) {
     return port_table_list_[key.protocol]->Free(key, port, evict);
 }
 
-void PortTableManager::UpdatePortConfig(uint8_t protocol, uint16_t port_count,
-                                        uint16_t range_start,
-                                        uint16_t range_end) {
-
+void PortTableManager::UpdatePortConfig(uint8_t protocol, const PortConfig *pc) {
     if (port_table_list_[protocol].get() == NULL) {
         return;
     }
 
-    port_table_list_[protocol]->UpdatePortConfig(port_count, range_start,
-                                                 range_end);
+    port_table_list_[protocol]->UpdatePortConfig(pc);
 }
 
 void PortTableManager::PortConfigHandler(Agent *agent, uint8_t protocol,
-                                         uint16_t port_count,
-                                         uint16_t range_start,
-                                         uint16_t range_end) {
+                                         const PortConfig *pc) {
     agent->pkt()->get_flow_proto()->port_table_manager()->
-        UpdatePortConfig(protocol, port_count, range_start, range_end);
+        UpdatePortConfig(protocol, pc);
 }

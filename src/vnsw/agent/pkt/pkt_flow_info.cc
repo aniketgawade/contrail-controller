@@ -182,7 +182,8 @@ static bool PickEcmpMember(const Agent *agent, const NextHop **nh,
     // and new index is allocated
     info->out_component_nh_idx =
         comp_nh->PickMember(pkt->hash(agent, ecmp_load_balance),
-                            info->out_component_nh_idx);
+                            info->out_component_nh_idx,
+                            info->ingress);
     *nh = comp_nh->GetNH(info->out_component_nh_idx);
 
     // TODO: Should we re-hash here?
@@ -714,6 +715,7 @@ void PktFlowInfo::BgpRouterServiceFromVm(const PktInfo *pkt, PktControlInfo *in,
 
     const VnEntry *vn = static_cast<const VnEntry *>(vm_port->vn());
     uint32_t sport = 0;
+    uint32_t dport = 0;
     IpAddress nat_server = IpAddress();
 
     if (vn == NULL) {
@@ -727,7 +729,7 @@ void PktFlowInfo::BgpRouterServiceFromVm(const PktInfo *pkt, PktControlInfo *in,
                                        pkt->ip_saddr.to_v4(),
                                        pkt->ip_daddr.to_v4(),
                                        &nat_server,
-                                       &sport) == false) {
+                                       &sport, &dport) == false) {
         return;
     }
 
@@ -739,7 +741,7 @@ void PktFlowInfo::BgpRouterServiceFromVm(const PktInfo *pkt, PktControlInfo *in,
     nat_ip_saddr = agent->router_id();
     nat_ip_daddr = nat_server;
     nat_sport = sport;
-    nat_dport = pkt->dport;
+    nat_dport = dport;
     if ((nat_ip_daddr == agent->router_id()) &&
         (nat_ip_daddr == nat_ip_saddr)) {
         boost::system::error_code ec;
@@ -944,7 +946,7 @@ void PktFlowInfo::FloatingIpSNat(const PktInfo *pkt, PktControlInfo *in,
             continue;
         }
 
-        if (pkt->ip_saddr != it->fixed_ip_) {
+        if (it->fixed_ip_ != Ip4Address(0) && (pkt->ip_saddr != it->fixed_ip_))  {
             continue;
         }
 
@@ -1543,7 +1545,7 @@ void PktFlowInfo::EgressProcess(const PktInfo *pkt, PktControlInfo *in,
             const CompositeNH *comp_nh = static_cast<const CompositeNH *>(nh);
             out_component_nh_idx = comp_nh->hash(pkt->
                                    hash(agent, out->rt_->GetActivePath()->
-                                        ecmp_load_balance()));
+                                        ecmp_load_balance()), ingress);
         }
         if (out->rt_->GetActiveNextHop()->GetType() == NextHop::ARP ||
             out->rt_->GetActiveNextHop()->GetType() == NextHop::RESOLVE) {

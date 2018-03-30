@@ -251,6 +251,11 @@ public:
     void set_subnet_service_ip(const IpAddress &ip) {
         subnet_service_ip_ = ip;
     }
+
+    void set_copy_local_path(bool copy_local_path) {
+        copy_local_path_ = copy_local_path;
+    }
+
     void set_local_ecmp_mpls_label(MplsLabel *mpls);
     bool dest_vn_match(const std::string &vn) const;
     const MplsLabel* local_ecmp_mpls_label() const;
@@ -278,7 +283,8 @@ public:
         return composite_nh_key_.get();
     }
     bool ReorderCompositeNH(Agent *agent, CompositeNHKey *nh,
-                            bool &comp_nh_policy);
+                            bool &comp_nh_policy,
+                            const AgentPath *local_path);
     bool ChangeCompositeNH(Agent *agent, CompositeNHKey *nh);
     // Get nexthop-ip address to be used for path
     const Ip4Address *NexthopIp(Agent *agent) const;
@@ -341,6 +347,14 @@ public:
         layer2_control_word_ = layer2_control_word;
     }
 
+    void set_native_vrf_id(uint32_t vrf_id) {
+        native_vrf_id_ = vrf_id;
+    }
+
+    uint32_t native_vrf_id() const {
+        return native_vrf_id_;
+    }
+
     void UpdateEcmpHashFields(const Agent *agent,
                               const EcmpLoadBalance &ecmp_load_balance,
                               DBRequest &nh_req);
@@ -355,6 +369,8 @@ public:
     }
 
     void ResetEcmpHashFields();
+    void CopyLocalPath(CompositeNHKey *composite_nh_key,
+                       const AgentPath *local_path);
 
 private:
     PeerConstPtr peer_;
@@ -439,6 +455,10 @@ private:
     //if its a l2 packet or l3 packet.
     bool layer2_control_word_;
     bool inactive_;
+    bool copy_local_path_;
+    //Valid for routes exported in ip-fabric:__default__ VRF
+    //Indicates the VRF from which routes was originated
+    uint32_t  native_vrf_id_;
     DISALLOW_COPY_AND_ASSIGN(AgentPath);
 };
 
@@ -555,7 +575,7 @@ public:
                  const EcmpLoadBalance &ecmp_load_balance, bool is_local,
                  bool is_health_check_service, uint64_t sequence_number,
                  bool etree_leaf, bool native_encap,
-                 const std::string &intf_route_type = VmInterface::kInterface):
+                 const std::string &intf_route_type = ""):
         AgentRouteData(AgentRouteData::ADD_DEL_CHANGE, false, sequence_number),
         intf_(intf), mpls_label_(mpls_label),
         vxlan_id_(vxlan_id), force_policy_(force_policy),
@@ -568,7 +588,7 @@ public:
         ecmp_load_balance_(ecmp_load_balance), is_local_(is_local),
         is_health_check_service_(is_health_check_service),
         etree_leaf_(etree_leaf), native_encap_(native_encap),
-        intf_route_type_(intf_route_type) {
+        intf_route_type_(intf_route_type), native_vrf_id_(VrfEntry::kInvalidIndex) {
     }
     virtual ~LocalVmRoute() { }
     void DisableProxyArp() {proxy_arp_ = false;}
@@ -589,6 +609,12 @@ public:
     bool proxy_arp() const {return proxy_arp_;}
     bool etree_leaf() const { return etree_leaf_;}
     const std::string &intf_route_type() const { return intf_route_type_; }
+    void set_native_vrf_id(uint32_t vrf_id) {
+        native_vrf_id_ = vrf_id;
+    }
+    uint32_t native_vrf_id() const {
+        return native_vrf_id_;
+    }
 private:
     VmInterfaceKey intf_;
     uint32_t mpls_label_;
@@ -610,6 +636,7 @@ private:
     bool etree_leaf_;
     bool native_encap_;
     std::string intf_route_type_;
+    uint32_t  native_vrf_id_;
     DISALLOW_COPY_AND_ASSIGN(LocalVmRoute);
 };
 

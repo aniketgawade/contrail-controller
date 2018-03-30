@@ -257,7 +257,7 @@ bool EcmpTunnelRouteAdd(const BgpPeer *peer, const string &vrf_name,
                        uint8_t plen, ComponentNHKeyList &comp_nh_list,
                        bool local_ecmp, const string &vn_name, const SecurityGroupList &sg,
                        const TagList &tag,
-                       const PathPreference &path_preference);
+                       const PathPreference &path_preference, bool add_local_path = false);
 bool EcmpTunnelRouteAdd(const BgpPeer *peer, const string &vrf_name,
                         const Ip4Address &vm_ip,
                        uint8_t plen, ComponentNHKeyList &comp_nh_list,
@@ -654,6 +654,7 @@ void AddStaticPreference(std::string intf_name, int intf_id, uint32_t value);
 bool VnMatch(VnListType &vn_list, std::string &vn);
 void SendBgpServiceConfig(const std::string &ip,
                           uint32_t source_port,
+                          uint32_t dest_port,
                           uint32_t id,
                           const std::string &vmi_name,
                           const std::string &vrf_name,

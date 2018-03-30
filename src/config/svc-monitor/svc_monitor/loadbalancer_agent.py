@@ -3,6 +3,7 @@ from vnc_api.vnc_api import *
 from cfgm_common import importutils
 from cfgm_common import exceptions as vnc_exc
 from cfgm_common import svc_info
+from cfgm_common import PERMS_RWX, PERMS_NONE, PERMS_RX
 
 from agent import Agent
 from config_db import ServiceApplianceSM, ServiceApplianceSetSM, \
@@ -92,6 +93,8 @@ class LoadbalancerAgent(Agent):
         except vnc_exc.NoIdError:
             gsc_obj = self._vnc_lib.global_system_config_read(fq_name=default_gsc_fq_name)
             sa_set_obj = ServiceApplianceSet(sa_set_name, gsc_obj)
+            perms2 = PermType2('cloud-admin',  PERMS_RWX,  PERMS_RX)
+            sa_set_obj.set_perms2(perms2)
             sa_set_obj.set_service_appliance_driver(driver_name)
             sa_set_uuid = self._vnc_lib.service_appliance_set_create(sa_set_obj)
             ServiceApplianceSetSM.locate(sa_set_uuid)
@@ -363,6 +366,8 @@ class LoadbalancerAgent(Agent):
 
     def loadbalancer_health_monitor_add(self, obj):
         hm = self.hm_get_reqdict(obj)
+        if 'provider' not in hm:
+            return None
         current_pools = hm['pools'] or []
         old_pools = []
         if obj.last_sent:
@@ -502,8 +507,8 @@ class LoadbalancerAgent(Agent):
                'loadbalancer_id': listener.loadbalancer,
                'admin_state_up': props['admin_state'],
                'connection_limit': props['connection_limit'],
-               'default_tls_container': props['default_tls_container'],
-               'sni_containers': props['sni_containers'],
+               'default_tls_container': getattr(props, 'default_tls_container', None),
+               'sni_containers': getattr(props, 'sni_containers', None),
                'status': self._get_object_status(listener)}
 
         return res
@@ -639,6 +644,7 @@ class LoadbalancerAgent(Agent):
         lb = LoadbalancerSM.get(lb_id)
         if not lb:
             return
+        sandesh = self._svc_mon.logger._sandesh
         if deleted == True:
             uve_lb = UveLoadbalancerConfig(name=lb.uuid, deleted=True)
             uve_lb.listener = {}
@@ -650,7 +656,6 @@ class LoadbalancerAgent(Agent):
         uve_lb.name = lb.uuid
         uve_lb.listener = {}
         uve_lb.pool = {}
-        sandesh = self._svc_mon.logger._sandesh
         pool_found = False
         for ll_id in lb.loadbalancer_listeners:
             ll = LoadbalancerListenerSM.get(ll_id)

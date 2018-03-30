@@ -15,7 +15,7 @@ from vnc_api.vnc_api import (
     VirtualNetworkType, VnSubnetsType, NetworkPolicy, ActionListType,
     VirtualNetworkPolicyType, SequenceType)
 from kube_manager.vnc.config_db import (
-    NetworkIpamKM, VirtualNetworkKM, ProjectKM, SecurityGroupKM)
+    NetworkIpamKM, VirtualNetworkKM, ProjectKM, SecurityGroupKM, DBBaseKM)
 from kube_manager.common.kube_config_db import NamespaceKM, PodKM
 from kube_manager.vnc.vnc_kubernetes_config import (
     VncKubernetesConfig as vnc_kube_config)
@@ -43,6 +43,7 @@ class VncNamespace(VncCommon):
             virtual_network_read(fq_name=ip_fabric_fq_name)
         self._ip_fabric_policy = None
         self._cluster_service_policy = None
+        self._nested_underlay_policy = None
 
     def _get_namespace(self, ns_name):
         """
@@ -159,7 +160,8 @@ class VncNamespace(VncCommon):
             project.ns_labels[ns_uuid] = labels
 
     def _create_isolated_ns_virtual_network(self, ns_name, vn_name,
-            vn_type, proj_obj, ipam_obj=None, provider=None):
+            vn_type, proj_obj, ipam_obj=None, provider=None,
+            enforce_policy=False):
         """
         Create/Update a virtual network for this namespace.
         """
@@ -219,6 +221,14 @@ class VncNamespace(VncCommon):
                 vn_obj.set_fabric_snat(False)
             # Update VN.
             self._vnc_lib.virtual_network_update(vn_obj)
+            vn_uuid = vn_obj.get_uuid()
+
+        vn_obj = self._vnc_lib.virtual_network_read(id=vn_uuid)
+
+        # If required, enforce security policy at virtual network level.
+        if enforce_policy:
+            self._vnc_lib.set_tags(vn_obj,
+              self._labels.get_labels_dict(VncSecurityPolicy.cluster_aps_uuid))
 
         return vn_obj
 
@@ -254,11 +264,13 @@ class VncNamespace(VncCommon):
 
     def _attach_policy(self, vn_obj, *policies):
         for policy in policies or []:
-            vn_obj.add_network_policy(policy,
-                VirtualNetworkPolicyType(sequence=SequenceType(0, 0)))
+            if policy:
+                vn_obj.add_network_policy(policy,
+                    VirtualNetworkPolicyType(sequence=SequenceType(0, 0)))
         self._vnc_lib.virtual_network_update(vn_obj)
         for policy in policies or []:
-            self._vnc_lib.ref_relax_for_delete(vn_obj.uuid, policy.uuid)
+            if policy:
+                self._vnc_lib.ref_relax_for_delete(vn_obj.uuid, policy.uuid)
 
     def _create_policy_entry(self, src_vn_obj, dst_vn_obj):
         return PolicyRuleType(
@@ -315,14 +327,25 @@ class VncNamespace(VncCommon):
             except NoIdError:
                 return
             self._ip_fabric_policy = cluster_ip_fabric_policy
+
+        self._nested_underlay_policy = None
+        if DBBaseKM.is_nested() and not self._nested_underlay_policy:
+            try:
+                name = vnc_kube_config.cluster_nested_underlay_policy_fq_name()
+                self._nested_underlay_policy = \
+                    self._vnc_lib.network_policy_read(fq_name=name)
+            except NoIdError:
+                return
+
         policy_name = "-".join([vnc_kube_config.cluster_name(), ns_name, 'pod-service-np'])
         #policy_name = '%s-default' %ns_name
         ns_default_policy = self._create_vn_vn_policy(policy_name, proj_obj,
             pod_vn_obj, service_vn_obj)
         self._attach_policy(pod_vn_obj, ns_default_policy,
-            self._ip_fabric_policy, self._cluster_service_policy)
+            self._ip_fabric_policy, self._cluster_service_policy,
+            self._nested_underlay_policy)
         self._attach_policy(service_vn_obj, ns_default_policy,
-            self._ip_fabric_policy)
+            self._ip_fabric_policy, self._nested_underlay_policy)
 
     def _delete_policy(self, ns_name, proj_fq_name):
         policy_name = "-".join([vnc_kube_config.cluster_name(), ns_name, 'pod-service-np'])
@@ -361,7 +384,7 @@ class VncNamespace(VncCommon):
             return rule
 
         # create default security group
-        sg_name = "-".join([vnc_kube_config.cluster_name(), ns_name, 'default-sg'])
+        sg_name = vnc_kube_config.get_default_sg_name(ns_name)
         DEFAULT_SECGROUP_DESCRIPTION = "Default security group"
         id_perms = IdPermsType(enable=True,
                                description=DEFAULT_SECGROUP_DESCRIPTION)
@@ -395,6 +418,18 @@ class VncNamespace(VncCommon):
     def vnc_namespace_add(self, namespace_id, name, labels):
         isolated_ns_ann = 'True' if self._is_namespace_isolated(name) \
             else 'False'
+
+        # Check if policy enforcement is enabled at project level.
+        # If not, then security will be enforced at VN level.
+        if DBBaseKM.is_nested():
+            # In nested mode, policy is always enforced at network level.
+            # This is so that we do not enforce policy on other virtual
+            # networks that may co-exist in the current project.
+            secure_project = False
+        else:
+            secure_project = vnc_kube_config.is_secure_project_enabled()
+        secure_vn = not secure_project
+
         proj_fq_name = vnc_kube_config.cluster_project_fq_name(name)
         proj_obj = Project(name=proj_fq_name[-1], fq_name=proj_fq_name)
 
@@ -433,7 +468,8 @@ class VncNamespace(VncCommon):
                 provider = None
             pod_vn = self._create_isolated_ns_virtual_network(
                     ns_name=name, vn_name=vn_name, vn_type='pod-network',
-                    proj_obj=proj_obj, ipam_obj=ipam_obj, provider=provider)
+                    proj_obj=proj_obj, ipam_obj=ipam_obj, provider=provider,
+                    enforce_policy = secure_vn)
             # Cache pod network info in namespace entry.
             self._set_namespace_pod_virtual_network(name, pod_vn.get_fq_name())
             vn_name = self._get_namespace_service_vn_name(name)
@@ -441,7 +477,8 @@ class VncNamespace(VncCommon):
             ipam_obj = self._vnc_lib.network_ipam_read(fq_name=ipam_fq_name)
             service_vn = self._create_isolated_ns_virtual_network(
                     ns_name=name, vn_name=vn_name, vn_type='service-network',
-                    ipam_obj=ipam_obj,proj_obj=proj_obj)
+                    ipam_obj=ipam_obj,proj_obj=proj_obj,
+                    enforce_policy = secure_vn)
             # Cache service network info in namespace entry.
             self._set_namespace_service_virtual_network(
                     name, service_vn.get_fq_name())
@@ -456,9 +493,12 @@ class VncNamespace(VncCommon):
         if project:
             self._update_namespace_label_cache(labels, namespace_id, project)
 
-            proj_obj = self._vnc_lib.project_read(id=project.uuid)
-            self._vnc_lib.set_tags(proj_obj,
-                self._labels.get_labels_dict(VncSecurityPolicy.cluster_aps_uuid))
+            # If requested, enforce security policy at project level.
+            if secure_project:
+                proj_obj = self._vnc_lib.project_read(id=project.uuid)
+                self._vnc_lib.set_tags(proj_obj,
+                    self._labels.get_labels_dict(
+                        VncSecurityPolicy.cluster_aps_uuid))
 
         return project
 
@@ -496,6 +536,9 @@ class VncNamespace(VncCommon):
             for sg_uuid in security_groups:
                 sg = SecurityGroupKM.get(sg_uuid)
                 if not sg:
+                    continue
+                sg_name = vnc_kube_config.get_default_sg_name(name)
+                if sg.name != sg_name:
                     continue
                 for vmi_id in list(sg.virtual_machine_interfaces):
                     try:

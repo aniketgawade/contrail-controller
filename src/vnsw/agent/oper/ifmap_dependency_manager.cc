@@ -708,6 +708,15 @@ void IFMapDependencyManager::InitializeDependencyRules(Agent *agent) {
                                "virtual-network", true,
                                "virtual-network-provider-network",
                                "virtual-network", true));
+    AddDependencyPath("virtual-machine-interface",
+                      MakePath("floating-ip-virtual-machine-interface",
+                               "floating-ip", true,
+                               "floating-ip-pool-floating-ip",
+                               "floating-ip-pool", false,
+                               "virtual-network-floating-ip-pool",
+                               "virtual-network", true,
+                               "virtual-network-routing-instance",
+                               "routing-instance", true));
      AddDependencyPath("virtual-machine-interface",
                        MakePath("floating-ip-virtual-machine-interface",
                                 "floating-ip", true,
@@ -798,6 +807,19 @@ void IFMapDependencyManager::InitializeDependencyRules(Agent *agent) {
 
     AddDependencyPath("virtual-machine-interface",
                       MakePath("virtual-machine-interface-virtual-machine",
+                               "virtual-machine", true,
+                               "virtual-machine-tag", "tag", true,
+                               "application-policy-set-tag",
+                               "application-policy-set", true,
+                               "application-policy-set-firewall-policy",
+                               "application-policy-set-firewall-policy", true,
+                               "application-policy-set-firewall-policy",
+                               "firewall-policy", true));
+
+    AddDependencyPath("virtual-machine-interface",
+                      MakePath("virtual-machine-interface-sub-interface",
+                               "virtual-machine-interface", true,
+                               "virtual-machine-interface-virtual-machine",
                                "virtual-machine", true,
                                "virtual-machine-tag", "tag", true,
                                "application-policy-set-tag",

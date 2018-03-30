@@ -44,7 +44,8 @@ from db import DBBaseDM, BgpRouterDM, PhysicalRouterDM, PhysicalInterfaceDM,\
     VirtualNetworkDM, RoutingInstanceDM, GlobalSystemConfigDM, LogicalRouterDM, \
     GlobalVRouterConfigDM, FloatingIpDM, InstanceIpDM, DMCassandraDB, PortTupleDM, \
     ServiceEndpointDM, ServiceConnectionModuleDM, ServiceObjectDM, \
-    NetworkDeviceConfigDM, E2ServiceProviderDM, PeeringPolicyDM
+    NetworkDeviceConfigDM, E2ServiceProviderDM, PeeringPolicyDM, \
+    SecurityGroupDM, AccessControlListDM
 from dm_amqp import DMAmqpHandle
 from dm_utils import PushConfigState
 from device_conf import DeviceConf
@@ -105,7 +106,7 @@ class DeviceManager(object):
             'physical_interface': ['virtual_machine_interface'],
             'virtual_machine_interface': ['physical_router',
                                           'physical_interface'],
-            'physical_router': ['virtual_machine_interface']
+            'physical_router': ['virtual_machine_interface'],
         },
         'virtual_machine_interface': {
             'self': ['logical_interface',
@@ -124,6 +125,15 @@ class DeviceManager(object):
             'routing_instance': ['port_tuple','physical_interface'],
             'port_tuple': ['physical_interface'],
             'service_endpoint': ['physical_router'],
+            'security_group': ['logical_interface'],
+        },
+        'security_group': {
+            'self': [],
+            'access_control_list':['virtual_machine_interface'],
+        },
+        'access_control_list': {
+            'self': ['security_group'],
+            'security_group':[],
         },
         'service_instance': {
             'self': ['port_tuple'],
@@ -292,6 +302,12 @@ class DeviceManager(object):
 
         for obj in VirtualMachineInterfaceDM.list_obj():
             VirtualMachineInterfaceDM.locate(obj['uuid'],obj)
+
+        for obj in SecurityGroupDM.list_obj():
+            SecurityGroupDM.locate(obj['uuid'],obj)
+
+        for obj in AccessControlListDM.list_obj():
+            AccessControlListDM.locate(obj['uuid'],obj)
 
         for obj in pr_obj_list:
             pr = PhysicalRouterDM.locate(obj['uuid'], obj)
@@ -526,6 +542,12 @@ def parse_args(args_str):
         help="List of cassandra servers in IP Address:Port format",
         nargs='+')
     parser.add_argument(
+        "--cassandra_use_ssl", action="store_true",
+        help="Enable TLS for cassandra communication")
+    parser.add_argument(
+        "--cassandra_ca_certs",
+        help="Cassandra CA certs")
+    parser.add_argument(
         "--reset_config", action="store_true",
         help="Warning! Destroy previous configuration and start clean")
     parser.add_argument("--api_server_ip",
@@ -590,6 +612,7 @@ def parse_args(args_str):
     if type(args.collectors) is str:
         args.collectors = args.collectors.split()
     args.sandesh_config = SandeshConfig.from_parser_arguments(args)
+    args.cassandra_use_ssl = (str(args.cassandra_use_ssl).lower() == 'true')
 
     args.conf_file = saved_conf_file
     return args
